@@ -521,9 +521,12 @@
 
 <!-- Fired Signals Log -->
 <div id="firedLog" class="card" style="display:none;">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
     <div style="font-size:11px;letter-spacing:2px;color:#22c55e;text-transform:uppercase;font-weight:600;">📋 Fired Signals</div>
-    <button onclick="showResult()" style="padding:5px 14px;font-size:11px;font-weight:700;letter-spacing:1px;border-radius:6px;border:1px solid #4f46e5;background:rgba(79,70,229,0.15);color:#a5b4fc;cursor:pointer;">RESULT</button>
+    <div style="display:flex;gap:6px;">
+      <button onclick="showResult()" style="padding:5px 14px;font-size:11px;font-weight:700;letter-spacing:1px;border-radius:6px;border:1px solid #4f46e5;background:rgba(79,70,229,0.15);color:#a5b4fc;cursor:pointer;">RESULT</button>
+      <button onclick="if(confirm('Clear all signal history?')) clearFiredLog()" style="padding:5px 14px;font-size:11px;font-weight:700;letter-spacing:1px;border-radius:6px;border:1px solid #475569;background:rgba(30,41,59,0.8);color:#94a3b8;cursor:pointer;">CLEAR</button>
+    </div>
   </div>
   <div id="firedList"></div>
 </div>
@@ -1029,8 +1032,10 @@ window.addEventListener('load', () => {
   // Start background status poll immediately (always running)
   function pollStatus() {
     fetchGistText().then(text => {
-        let sessionLine = text.split('\n').find(l => l.trim().startsWith('#STATUS:'));
-        updateSessionBanner(sessionLine ? sessionLine.trim().replace('#STATUS:','') : 'none');
+        if (!useRawFallback) {
+          let sessionLine = text.split('\n').find(l => l.trim().startsWith('#STATUS:'));
+          updateSessionBanner(sessionLine ? sessionLine.trim().replace('#STATUS:','') : 'none');
+        }
         if (isScanning) _processSignalText(text);
       }).catch(e => { console.log('Poll error:', e); });
   }
@@ -1341,17 +1346,36 @@ async function fetchGistText() {
 }
 
 function _processSignalText(text) {
-  if (!text || !text.trim() || text.trim() === '#empty') {
-    signals = []; renderSignals(); stopRadar(); clearFiredLog(); return;
+  if (!text || !text.trim()) {
+    signals = []; renderSignals(); stopRadar(); return;
+  }
+  // Admin clear — wipe everything
+  if (text.includes('#STATUS:clear')) {
+    clearFiredLog();
+    signals = []; renderSignals(); stopRadar();
+    return;
+  }
+  if (text.trim() === '#empty') {
+    signals = []; renderSignals(); stopRadar(); return;
   }
   let signalLines = text.split('\n').filter(l => l.trim() && !l.trim().startsWith('#'));
-  if (!signalLines.length) { signals = []; renderSignals(); stopRadar(); clearFiredLog(); return; }
+  if (!signalLines.length) { signals = []; renderSignals(); stopRadar(); return; }
   let parsed = [];
   signalLines.forEach(line => {
     let s = parseSignal(line.trim());
     if (!s) return;
+    // Always preserve notified + result from existing signals
     let existing = signals.find(e => e.pair === s.pair && e.time === s.time && e.action === s.action);
-    if (existing) { s.result = existing.result; s.notified = existing.notified; }
+    if (existing) {
+      s.result   = existing.result;
+      s.notified = existing.notified; // CRITICAL: keep notified state
+    } else {
+      // New signal — check if it already fired (time passed) so we don't re-alert
+      let now = getNow();
+      let signalTime = getSignalDate(s.time);
+      let diff = (signalTime - now) / 1000;
+      if (diff <= 0) s.notified = true; // already past, don't alert
+    }
     parsed.push(s);
   });
   signals = parsed;
@@ -1364,8 +1388,11 @@ async function fetchSignals() {
     let text = await fetchGistText();
     let now  = new Date();
     let timeStr = now.getHours() + ':' + String(now.getMinutes()).padStart(2,'0') + ':' + String(now.getSeconds()).padStart(2,'0');
-    let sessionLine = text.split('\n').find(l => l.trim().startsWith('#STATUS:'));
-    updateSessionBanner(sessionLine ? sessionLine.trim().replace('#STATUS:','') : 'none');
+    // Only update session banner from fresh API data, not stale raw cache
+    if (!useRawFallback) {
+      let sessionLine = text.split('\n').find(l => l.trim().startsWith('#STATUS:'));
+      updateSessionBanner(sessionLine ? sessionLine.trim().replace('#STATUS:','') : 'none');
+    }
     _processSignalText(text);
     let ft = document.getElementById('lastFetchTime');
     if (ft) ft.textContent = 'Last sync: ' + timeStr + ' (' + signals.length + ' signal' + (signals.length !== 1 ? 's' : '') + ')';
@@ -1377,6 +1404,12 @@ async function fetchSignals() {
 
 // ── Session Banner ────────────────────────────────────────────────────────
 function updateSessionBanner(status) {
+  // Never downgrade from a known status unless explicitly changed
+  let last = sessionStorage.getItem('lastSessionStatus') || 'none';
+  // If new status is 'none' but we had 'live' or 'ended', keep the last known
+  if (status === 'none' && (last === 'live' || last === 'ended')) return;
+  sessionStorage.setItem('lastSessionStatus', status);
+
   let banner = document.getElementById('sessionBanner');
   let txt    = document.getElementById('sessionStatusText');
   let dot    = document.getElementById('sessionDot');
