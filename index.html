@@ -621,7 +621,7 @@ function updateAlertCountdown() {
       document.getElementById('alertDisplay').className = '';
       document.getElementById('alertDisplay').style.display = 'none';
       activeAlertSignal = null;
-    }, 3000);
+    }, 15000);
     return;
   }
   countdownEl.textContent = m > 0 ? m + 'm ' + pad(s) + 's' : pad(s) + 's';
@@ -931,11 +931,11 @@ function checkSignals() {
   signals.forEach(s => {
     let signalTime = getSignalDate(s.time);
     let diff = (signalTime - now) / 1000;
-    if (diff <= 60 && diff > 0 && !s.notified) {
+    if (diff <= 90 && diff > 0 && !s.notified) {
       s.notified = true;
       showAlertDisplay(s);
       if (alertsEnabled) {
-        swNotify(`${s.raw}\nFiring in less than 1 minute!`, s.time + s.action);
+        swNotify(`${s.raw}\nFiring in less than 1 minute 30 seconds!`, s.time + s.action);
         playTripleBeep();
       }
     }
